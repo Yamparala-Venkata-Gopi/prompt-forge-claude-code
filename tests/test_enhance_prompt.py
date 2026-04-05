@@ -97,33 +97,34 @@ class TestGetUserChoice(unittest.TestCase):
 
 class TestEnhanceWithClaude(unittest.TestCase):
 
-    @patch('subprocess.run')
-    def test_returns_enhanced_text(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="Enhanced: fix the null pointer in handle_request()",
-            stderr=""
-        )
+    @patch('enhance_prompt.get_api_key', return_value='sk-ant-fake')
+    @patch('urllib.request.urlopen')
+    def test_returns_enhanced_text(self, mock_urlopen, mock_key):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "content": [{"text": "Enhanced: fix the null pointer in handle_request()"}]
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
         result = ep.enhance_with_claude("fix the bug")
         self.assertEqual(result, "Enhanced: fix the null pointer in handle_request()")
 
-    @patch('subprocess.run')
-    def test_strips_whitespace_from_response(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout="  enhanced prompt with spaces  ",
-            stderr=""
-        )
+    @patch('enhance_prompt.get_api_key', return_value='sk-ant-fake')
+    @patch('urllib.request.urlopen')
+    def test_strips_whitespace_from_response(self, mock_urlopen, mock_key):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "content": [{"text": "  enhanced prompt with spaces  "}]
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
         result = ep.enhance_with_claude("fix the bug")
         self.assertEqual(result, "enhanced prompt with spaces")
 
-    @patch('subprocess.run')
-    def test_raises_on_non_zero_exit(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="claude CLI error"
-        )
+    @patch('enhance_prompt.get_api_key', return_value='')
+    def test_raises_when_no_api_key(self, mock_key):
         with self.assertRaises(RuntimeError):
             ep.enhance_with_claude("fix the bug")
 

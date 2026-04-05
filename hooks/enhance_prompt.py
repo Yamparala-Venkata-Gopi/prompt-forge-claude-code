@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import difflib
+import urllib.request
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,24 +102,48 @@ def should_skip(prompt: str) -> bool:
 
 # ── LLM Enhancement ──────────────────────────────────────────────────────────
 
-def enhance_with_claude(prompt: str) -> str:
-    """Use the claude CLI to enhance the prompt — reuses Claude Code's own auth, no API key needed."""
-    env = os.environ.copy()
-    # Prevent infinite recursion: the spawned claude process must not trigger this hook again
-    env["PROMPT_FORGE_DISABLED"] = "1"
+def get_api_key() -> str:
+    """Get API key: env var first, then macOS keychain (where Claude Code stores it)."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key:
+        return key
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code", "-w"],
+            capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
 
-    result = subprocess.run(
-        ["claude", "-p", prompt,
-         "--system-prompt", ENHANCEMENT_SYSTEM_PROMPT,
-         "--model", "haiku"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=env,
+
+def enhance_with_claude(prompt: str) -> str:
+    """Call Haiku API directly — fast (~1s vs 7s for claude CLI)."""
+    api_key = get_api_key()
+    if not api_key:
+        raise RuntimeError("No API key found")
+
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 512,
+        "system": ENHANCEMENT_SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=data,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
     )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "claude CLI returned non-zero exit code")
-    return result.stdout.strip()
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        result = json.loads(resp.read())
+        return result["content"][0]["text"].strip()
 
 
 # ── Diff Display ─────────────────────────────────────────────────────────────
