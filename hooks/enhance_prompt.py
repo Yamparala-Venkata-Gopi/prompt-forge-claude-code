@@ -211,6 +211,11 @@ def get_user_choice(original: str, enhanced: str) -> str:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Debug log — remove after confirming hook fires
+    import datetime
+    with open("/tmp/prompt-forge-debug.log", "a") as f:
+        f.write(f"[{datetime.datetime.now()}] hook fired\n")
+
     # Read hook input from stdin
     raw = sys.stdin.read()
     try:
