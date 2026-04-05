@@ -103,6 +103,10 @@ def should_skip(prompt: str) -> bool:
 
 def enhance_with_claude(prompt: str) -> str:
     """Use the claude CLI to enhance the prompt — reuses Claude Code's own auth, no API key needed."""
+    env = os.environ.copy()
+    # Prevent infinite recursion: the spawned claude process must not trigger this hook again
+    env["PROMPT_FORGE_DISABLED"] = "1"
+
     result = subprocess.run(
         ["claude", "-p", prompt,
          "--system-prompt", ENHANCEMENT_SYSTEM_PROMPT,
@@ -110,6 +114,7 @@ def enhance_with_claude(prompt: str) -> str:
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "claude CLI returned non-zero exit code")
