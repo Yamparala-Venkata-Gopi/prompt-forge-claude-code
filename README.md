@@ -39,30 +39,24 @@ What would you like to do?
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8+
-- `jq` (`brew install jq`)
-- `ANTHROPIC_API_KEY` set in your environment
-- Optional: `gum` for a nicer TUI (`brew install charmbracelet/tap/gum`)
-
-### Install
-
 ```bash
-git clone https://github.com/Yamparala-Venkata-Gopi/prompt-forge-claude-code.git
-cd prompt-forge-claude-code
-chmod +x install.sh
-./install.sh
+/plugin install Yamparala-Venkata-Gopi/prompt-forge-claude-code
 ```
 
-The installer:
-- Copies the hook script to `~/.claude/hooks/prompt-forge/`
-- Registers the `UserPromptSubmit` hook in `~/.claude/settings.json`
+That's it. Claude Code's plugin system handles everything — no shell scripts, no manual config.
 
-### Uninstall
+### Prerequisites
+
+- Optional: `gum` for a nicer TUI (`brew install charmbracelet/tap/gum`)
+
+> **No API key setup needed.** Claude Code already has your Anthropic API key — prompt-forge uses it automatically.
+
+---
+
+## Uninstall
 
 ```bash
-./uninstall.sh
+/plugin uninstall Yamparala-Venkata-Gopi/prompt-forge-claude-code
 ```
 
 ---
@@ -77,22 +71,22 @@ export PROMPT_FORGE_DISABLED=1
 
 ### When Prompts Are Skipped (No Enhancement)
 
-prompt-forge skips enhancement for:
-- Very short prompts (< 4 words)
+prompt-forge silently skips enhancement for:
+- Short prompts under 4 words
 - Simple confirmations: `yes`, `no`, `ok`, `done`, `continue`
-- Long prompts (> 600 chars) — already detailed enough
-- If `ANTHROPIC_API_KEY` is not set
+- Already-detailed prompts over 600 characters
+- When `PROMPT_FORGE_DISABLED=1`
 
 ### Cost
 
 Uses **Claude Haiku** — the fastest and cheapest Claude model.
-Typical cost per enhancement: **< $0.001** (less than a tenth of a cent).
+Typical cost per enhancement: **< $0.001**.
 
 ---
 
 ## How It Works
 
-prompt-forge uses Claude Code's `UserPromptSubmit` hook, which fires on every prompt before Claude processes it.
+prompt-forge uses Claude Code's native `UserPromptSubmit` hook via the plugin system.
 
 ```
 User submits prompt
@@ -101,23 +95,18 @@ User submits prompt
 UserPromptSubmit hook fires
         │
         ▼
-enhance_prompt.py runs
+enhance_prompt.py runs (${CLAUDE_PLUGIN_ROOT}/hooks/enhance_prompt.py)
   → calls Claude Haiku API
-  → shows colored diff on terminal
+  → shows colored diff in terminal
   → reads user choice via /dev/tty
         │
         ▼
-Returns {"prompt": "<chosen version>"}
-        │
-        ▼
-Claude Code processes the final prompt
+Returns {"prompt": "<chosen version>"} to Claude Code
 ```
 
 ---
 
 ## Manual Usage (Without Auto-Hook)
-
-You can also invoke the agent manually for a specific prompt:
 
 In Claude Code, type:
 ```
@@ -142,10 +131,8 @@ prompt-forge-claude-code/
 │   └── prompt-enhance/
 │       └── SKILL.md         # Skill definition
 ├── hooks/
-│   ├── hooks.json           # UserPromptSubmit hook config
+│   ├── hooks.json           # UserPromptSubmit hook (auto-discovered)
 │   └── enhance_prompt.py    # Core hook script
-├── install.sh               # Installer
-├── uninstall.sh             # Uninstaller
 └── README.md
 ```
 
@@ -153,14 +140,13 @@ prompt-forge-claude-code/
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+PRs welcome.
 
-Ideas for contributions:
-- Windows (`install.ps1`) support
-- Linux support
+Ideas:
+- Windows support
 - Project-aware enhancement (reads `CLAUDE.md` for context)
 - Enhancement history log
-- Per-project enable/disable via `.claude/settings.json`
+- Per-project enable/disable
 
 ---
 

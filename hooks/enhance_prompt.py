@@ -244,8 +244,10 @@ def main() -> None:
     show_diff(prompt, enhanced)
     final = get_user_choice(prompt, enhanced)
 
-    # Output the chosen prompt for Claude Code to use
-    print(json.dumps({"prompt": final}))
+    # Only output if user chose something different from the original.
+    # No output = Claude Code uses the original prompt unchanged.
+    if final.strip() != prompt.strip():
+        print(json.dumps({"prompt": final}))
 
 
 if __name__ == "__main__":
