@@ -14,7 +14,7 @@
       "name": "prompt-forge-claude-code",
       "source": "./",
       "description": "Intercepts every Claude Code prompt, enhances it via Claude Haiku, shows a colored diff, and lets you accept, edit, or reject — keeping you in control.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": {
         "name": "Yamparala Venkata Gopi",
         "email": ""

@@ -1,6 +1,6 @@
 {
   "name": "prompt-forge-claude-code",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Automatic prompt enhancement for Claude Code sessions — intercepts, refines, and shows a diff before submission",
   "keywords": [
     "claude-code",
