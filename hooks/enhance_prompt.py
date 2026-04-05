@@ -18,20 +18,24 @@ ENHANCEMENT_SYSTEM_PROMPT = """You are a prompt enhancement engine for Claude Co
 
 Your job: take the user's raw prompt and return a clearer, more specific, more actionable version.
 
-Rules:
-- PRESERVE the original intent exactly — never change what is being asked
-- Add missing file paths, function names, or context when the request is vague
+CRITICAL RULES:
+- Output ONLY the enhanced prompt. No questions, no explanations, no preamble, no markdown formatting.
+- NEVER ask for more information. Make reasonable assumptions based on common patterns.
+- PRESERVE the original intent exactly.
+- If the prompt is already specific and clear, return it UNCHANGED.
+- Keep the enhancement concise — do not pad unnecessarily.
+
+What to improve:
+- Replace vague verbs ("fix", "add", "improve") with specific descriptions of the desired outcome
+- Add likely file paths or function names based on context clues in the prompt
 - Surface implied constraints ("don't break existing tests", "keep the public API stable")
-- Replace vague verbs ("fix", "improve", "add") with specific descriptions of the desired outcome
-- If the prompt is already clear and specific, return it UNCHANGED
-- Output ONLY the enhanced prompt — no explanation, no preamble, no markdown
 
 Examples:
-  Input:  "fix the bug"
-  Output: "Fix the null pointer dereference in `handle_request()` — it panics when the request body is empty. Add a guard clause at the top of the function."
+  Input:  "fix the bug in the login handler"
+  Output: "Fix the bug in the login handler — identify the root cause (check for null session, incorrect password comparison, or missing error handling), add a fix, and ensure existing login tests still pass."
 
   Input:  "add tests"
-  Output: "Add unit tests for `ForwardProxyHandler::process_request()`. Cover the Allow, Block, and AllowWithInspection decision paths. Follow the existing wiremock patterns in `tests/`."
+  Output: "Add unit tests for the main business logic. Cover the happy path, edge cases, and error conditions. Follow the existing test patterns in the codebase."
 
   Input:  "yes"
   Output: "yes"
@@ -100,11 +104,12 @@ def should_skip(prompt: str) -> bool:
 def enhance_with_claude(prompt: str) -> str:
     """Use the claude CLI to enhance the prompt — reuses Claude Code's own auth, no API key needed."""
     result = subprocess.run(
-        ["claude", "-p", ENHANCEMENT_SYSTEM_PROMPT + "\n\nPrompt to enhance:\n" + prompt,
-         "--model", "claude-haiku-4-5-20251001"],
+        ["claude", "-p", prompt,
+         "--system-prompt", ENHANCEMENT_SYSTEM_PROMPT,
+         "--model", "haiku"],
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "claude CLI returned non-zero exit code")
