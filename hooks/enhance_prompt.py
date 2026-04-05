@@ -11,8 +11,6 @@ import subprocess
 import sys
 import tempfile
 import difflib
-import urllib.request
-import urllib.error
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -99,26 +97,18 @@ def should_skip(prompt: str) -> bool:
 
 # ── LLM Enhancement ──────────────────────────────────────────────────────────
 
-def call_haiku(prompt: str, api_key: str) -> str:
-    payload = {
-        "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 512,
-        "system": ENHANCEMENT_SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=data,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
+def enhance_with_claude(prompt: str) -> str:
+    """Use the claude CLI to enhance the prompt — reuses Claude Code's own auth, no API key needed."""
+    result = subprocess.run(
+        ["claude", "-p", ENHANCEMENT_SYSTEM_PROMPT + "\n\nPrompt to enhance:\n" + prompt,
+         "--model", "claude-haiku-4-5-20251001"],
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        result = json.loads(resp.read())
-        return result["content"][0]["text"].strip()
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "claude CLI returned non-zero exit code")
+    return result.stdout.strip()
 
 
 # ── Diff Display ─────────────────────────────────────────────────────────────
@@ -222,18 +212,12 @@ def main() -> None:
     if not prompt or should_skip(prompt):
         sys.exit(0)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        tty_print(f"{YELLOW}⚒  prompt-forge: ANTHROPIC_API_KEY not set — skipping enhancement.{RESET}")
-        tty_print(f"{YELLOW}   Add to ~/.zshrc: export ANTHROPIC_API_KEY=sk-ant-...{RESET}")
-        sys.exit(0)
-
     # Check if user has disabled prompt forge
     if os.environ.get("PROMPT_FORGE_DISABLED", "").lower() in ("1", "true", "yes"):
         sys.exit(0)
 
     try:
-        enhanced = call_haiku(prompt, api_key)
+        enhanced = enhance_with_claude(prompt)
     except Exception as e:
         tty_print(f"{YELLOW}prompt-forge: enhancement failed ({e}), using original{RESET}")
         sys.exit(0)

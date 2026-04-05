@@ -55,9 +55,10 @@ That's it. Claude Code's plugin system handles everything — no shell scripts, 
 
 ### Prerequisites
 
+- Claude Code installed and authenticated (that's it)
 - Optional: `gum` for a nicer TUI (`brew install charmbracelet/tap/gum`)
 
-> **No API key setup needed.** Claude Code already has your Anthropic API key — prompt-forge uses it automatically.
+> **No API key setup needed.** prompt-forge calls the `claude` CLI directly and reuses Claude Code's own authentication.
 
 ---
 

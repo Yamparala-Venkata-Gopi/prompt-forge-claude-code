@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Unit tests for enhance_prompt.py
-Tests all business logic without requiring a real API key or TTY.
+Tests all business logic without requiring API keys or a TTY.
 """
 
 import json
@@ -45,7 +45,7 @@ class TestShouldSkip(unittest.TestCase):
         self.assertFalse(ep.should_skip("fix the login bug"))
 
     def test_skips_long_prompt_over_600_chars(self):
-        long = "word " * 200  # well over 600 chars
+        long = "word " * 200
         self.assertTrue(ep.should_skip(long))
 
     def test_does_not_skip_normal_prompt(self):
@@ -95,47 +95,49 @@ class TestGetUserChoice(unittest.TestCase):
         self.assertEqual(result, "original prompt")
 
 
-class TestCallHaiku(unittest.TestCase):
+class TestEnhanceWithClaude(unittest.TestCase):
 
-    @patch('urllib.request.urlopen')
-    def test_returns_enhanced_text(self, mock_urlopen):
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "content": [{"text": "Enhanced: fix the null pointer in handle_request()"}]
-        }).encode()
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_response
-
-        result = ep.call_haiku("fix the bug", "sk-ant-fake")
+    @patch('subprocess.run')
+    def test_returns_enhanced_text(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Enhanced: fix the null pointer in handle_request()",
+            stderr=""
+        )
+        result = ep.enhance_with_claude("fix the bug")
         self.assertEqual(result, "Enhanced: fix the null pointer in handle_request()")
 
-    @patch('urllib.request.urlopen')
-    def test_strips_whitespace_from_response(self, mock_urlopen):
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "content": [{"text": "  enhanced prompt with spaces  "}]
-        }).encode()
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_response
-
-        result = ep.call_haiku("fix the bug", "sk-ant-fake")
+    @patch('subprocess.run')
+    def test_strips_whitespace_from_response(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="  enhanced prompt with spaces  ",
+            stderr=""
+        )
+        result = ep.enhance_with_claude("fix the bug")
         self.assertEqual(result, "enhanced prompt with spaces")
+
+    @patch('subprocess.run')
+    def test_raises_on_non_zero_exit(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="claude CLI error"
+        )
+        with self.assertRaises(RuntimeError):
+            ep.enhance_with_claude("fix the bug")
 
 
 class TestMainFlow(unittest.TestCase):
 
-    def _run_main(self, stdin_json: dict, env: dict, mock_enhanced: str = None,
+    def _run_main(self, stdin_json: dict, env: dict = None, mock_enhanced: str = None,
                   user_choice: str = 'a') -> tuple:
-        """Helper to run main() with mocked I/O and return (stdout, exit_code)."""
         import io
         from contextlib import redirect_stdout
 
         stdin_data = json.dumps(stdin_json)
         stdout_capture = io.StringIO()
-
-        env_patch = {**os.environ, **env}
+        env_patch = {**os.environ, **(env or {})}
 
         with patch('sys.stdin', io.StringIO(stdin_data)), \
              patch.dict('os.environ', env_patch, clear=True), \
@@ -144,14 +146,7 @@ class TestMainFlow(unittest.TestCase):
              patch('enhance_prompt.has_command', return_value=False), \
              redirect_stdout(stdout_capture):
 
-            if mock_enhanced:
-                with patch('enhance_prompt.call_haiku', return_value=mock_enhanced):
-                    try:
-                        ep.main()
-                        exit_code = 0
-                    except SystemExit as e:
-                        exit_code = e.code or 0
-            else:
+            with patch('enhance_prompt.enhance_with_claude', return_value=mock_enhanced or ""):
                 try:
                     ep.main()
                     exit_code = 0
@@ -161,22 +156,14 @@ class TestMainFlow(unittest.TestCase):
         return stdout_capture.getvalue(), exit_code
 
     def test_short_prompt_exits_silently(self):
-        out, code = self._run_main({"prompt": "yes"}, {"ANTHROPIC_API_KEY": "fake"})
-        self.assertEqual(code, 0)
-        self.assertEqual(out, "")
-
-    def test_no_api_key_exits_silently(self):
-        out, code = self._run_main(
-            {"prompt": "fix the auth bug in login handler"},
-            {"ANTHROPIC_API_KEY": ""}
-        )
+        out, code = self._run_main({"prompt": "yes"})
         self.assertEqual(code, 0)
         self.assertEqual(out, "")
 
     def test_disabled_flag_exits_silently(self):
         out, code = self._run_main(
             {"prompt": "fix the auth bug in login handler"},
-            {"ANTHROPIC_API_KEY": "fake", "PROMPT_FORGE_DISABLED": "1"}
+            env={"PROMPT_FORGE_DISABLED": "1"}
         )
         self.assertEqual(code, 0)
         self.assertEqual(out, "")
@@ -184,7 +171,6 @@ class TestMainFlow(unittest.TestCase):
     def test_accept_outputs_enhanced_prompt(self):
         out, code = self._run_main(
             {"prompt": "add logging to proxy"},
-            {"ANTHROPIC_API_KEY": "fake"},
             mock_enhanced="Add structured logging to the proxy pipeline with INFO/DEBUG levels",
             user_choice='a'
         )
@@ -195,34 +181,30 @@ class TestMainFlow(unittest.TestCase):
     def test_reject_outputs_nothing(self):
         out, code = self._run_main(
             {"prompt": "add logging to proxy"},
-            {"ANTHROPIC_API_KEY": "fake"},
             mock_enhanced="Add structured logging to the proxy pipeline with INFO/DEBUG levels",
             user_choice='r'
         )
         self.assertEqual(code, 0)
-        # Reject = no stdout output = Claude Code uses original
         self.assertEqual(out.strip(), "")
 
-    def test_no_change_from_haiku_exits_silently(self):
+    def test_no_change_exits_silently(self):
         out, code = self._run_main(
             {"prompt": "add logging to proxy"},
-            {"ANTHROPIC_API_KEY": "fake"},
-            mock_enhanced="add logging to proxy",  # same as original
+            mock_enhanced="add logging to proxy",
         )
         self.assertEqual(code, 0)
         self.assertEqual(out, "")
 
-    def test_api_error_exits_silently(self):
-        import urllib.error
-        stdin_data = json.dumps({"prompt": "fix the auth bug in login handler"})
+    def test_cli_error_exits_silently(self):
         import io
+        from contextlib import redirect_stdout
+        stdin_data = json.dumps({"prompt": "fix the auth bug in login handler"})
         stdout_capture = io.StringIO()
 
         with patch('sys.stdin', io.StringIO(stdin_data)), \
-             patch.dict('os.environ', {"ANTHROPIC_API_KEY": "bad-key"}, clear=True), \
              patch('enhance_prompt.tty_print'), \
-             patch('enhance_prompt.call_haiku', side_effect=Exception("HTTP Error 401")), \
-             io.StringIO() as _:
+             patch('enhance_prompt.enhance_with_claude', side_effect=Exception("claude CLI error")), \
+             redirect_stdout(stdout_capture):
             try:
                 ep.main()
                 exit_code = 0
