@@ -49,6 +49,8 @@ Inside a Claude Code session, run these two commands:
 /plugin install prompt-forge-claude-code@prompt-forge-claude-code
 ```
 
+> One-time install — Claude Code saves it to `~/.claude/settings.json` and loads it automatically in every future session.
+
 That's it. Claude Code's plugin system handles everything — no shell scripts, no manual config.
 
 ### Prerequisites
