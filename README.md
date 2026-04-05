@@ -39,8 +39,14 @@ What would you like to do?
 
 ## Installation
 
-```bash
-/plugin install Yamparala-Venkata-Gopi/prompt-forge-claude-code
+Inside a Claude Code session, run these two commands:
+
+```
+/plugin marketplace add Yamparala-Venkata-Gopi/prompt-forge-claude-code
+```
+
+```
+/plugin install prompt-forge-claude-code@prompt-forge-claude-code
 ```
 
 That's it. Claude Code's plugin system handles everything — no shell scripts, no manual config.
@@ -55,8 +61,10 @@ That's it. Claude Code's plugin system handles everything — no shell scripts, 
 
 ## Uninstall
 
-```bash
-/plugin uninstall Yamparala-Venkata-Gopi/prompt-forge-claude-code
+Inside a Claude Code session:
+
+```
+/plugin uninstall prompt-forge-claude-code@prompt-forge-claude-code
 ```
 
 ---
