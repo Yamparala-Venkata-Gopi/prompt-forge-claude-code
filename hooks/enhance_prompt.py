@@ -224,7 +224,8 @@ def main() -> None:
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        # Silently pass through — plugin is opt-in via API key
+        tty_print(f"{YELLOW}⚒  prompt-forge: ANTHROPIC_API_KEY not set — skipping enhancement.{RESET}")
+        tty_print(f"{YELLOW}   Add to ~/.zshrc: export ANTHROPIC_API_KEY=sk-ant-...{RESET}")
         sys.exit(0)
 
     # Check if user has disabled prompt forge
