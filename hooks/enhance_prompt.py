@@ -1,97 +1,78 @@
 #!/usr/bin/env python3
 """
-prompt-forge-claude-code — UserPromptSubmit hook
+prompt-forge-claude-code -- UserPromptSubmit hook
+
 Intercepts Claude Code prompts, enhances them via Claude Haiku,
-shows a colored diff, and lets the user accept / edit / reject.
+and returns additional context to help Claude better understand the user's intent.
+
+Non-interactive. Fails open (exit 0) on any error. No TTY access.
 """
 
 import json
 import os
 import subprocess
 import sys
-import tempfile
-import difflib
 import urllib.request
+import urllib.error
+from pathlib import Path
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# -- Constants ----------------------------------------------------------------
 
-ENHANCEMENT_SYSTEM_PROMPT = """You are a prompt enhancement engine for Claude Code sessions.
+ENHANCEMENT_SYSTEM_PROMPT = """\
+You are a prompt enhancement engine for Claude Code sessions.
 
-Your job: take the user's raw prompt and return a clearer, more specific, more actionable version.
+Your job: take the user's raw prompt and return a clearer, more specific, \
+more actionable version.
 
 CRITICAL RULES:
-- Output ONLY the enhanced prompt. No questions, no explanations, no preamble, no markdown formatting.
-- NEVER ask for more information. Make reasonable assumptions based on common patterns.
+- Output ONLY the enhanced prompt. No questions, no explanations, no preamble.
+- NEVER ask for more information. Make reasonable assumptions.
 - PRESERVE the original intent exactly.
 - If the prompt is already specific and clear, return it UNCHANGED.
-- Keep the enhancement concise — do not pad unnecessarily.
+- Keep the enhancement concise -- do not pad unnecessarily.
 
 What to improve:
-- Replace vague verbs ("fix", "add", "improve") with specific descriptions of the desired outcome
-- Add likely file paths or function names based on context clues in the prompt
-- Surface implied constraints ("don't break existing tests", "keep the public API stable")
+- Replace vague verbs ("fix", "add", "improve") with specific outcomes
+- Add likely file paths or function names based on context clues
+- Surface implied constraints ("don't break existing tests", "keep the API stable")
 
 Examples:
   Input:  "fix the bug in the login handler"
-  Output: "Fix the bug in the login handler — identify the root cause (check for null session, incorrect password comparison, or missing error handling), add a fix, and ensure existing login tests still pass."
+  Output: "Fix the bug in the login handler -- identify the root cause \
+(check for null session, incorrect password comparison, or missing error \
+handling), add a fix, and ensure existing login tests still pass."
 
   Input:  "add tests"
-  Output: "Add unit tests for the main business logic. Cover the happy path, edge cases, and error conditions. Follow the existing test patterns in the codebase."
+  Output: "Add unit tests for the main business logic. Cover the happy path, \
+edge cases, and error conditions. Follow the existing test patterns."
 
   Input:  "yes"
   Output: "yes"
 """
 
-SKIP_PATTERNS = {"yes", "no", "ok", "done", "continue", "stop", "quit", "exit", "y", "n"}
+SKIP_PATTERNS = frozenset({
+    "yes", "no", "ok", "done", "continue", "stop", "quit", "exit",
+    "y", "n", "sure", "thanks", "thank you", "go ahead", "proceed",
+    "lgtm", "correct", "right", "nope", "yep", "yup", "nah",
+})
+
 MIN_WORDS = 4
-MAX_CHARS_TO_ENHANCE = 600  # prompts longer than this are probably already detailed
-
-# ANSI colors
-RED = "\033[31m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-CYAN = "\033[36m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-RESET = "\033[0m"
+MAX_CHARS_TO_ENHANCE = 600
+API_TIMEOUT_SECONDS = 8
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# -- Skip Logic ---------------------------------------------------------------
 
-def tty_print(msg: str) -> None:
-    """Write to the terminal even when stdout is captured by Claude Code."""
-    try:
-        with open("/dev/tty", "w") as tty:
-            tty.write(msg + "\n")
-    except OSError:
-        print(msg, file=sys.stderr)
-
-
-def tty_input(prompt: str) -> str:
-    """Read a line from the terminal even when stdin is consumed."""
-    try:
-        with open("/dev/tty", "r") as tty:
-            sys.stderr.write(prompt)
-            sys.stderr.flush()
-            return tty.readline().strip()
-    except OSError:
-        return ""
-
-
-def has_command(cmd: str) -> bool:
-    try:
-        subprocess.run([cmd, "--version"], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-
-def should_skip(prompt: str) -> bool:
+def should_skip(prompt):
     """Return True for prompts that don't benefit from enhancement."""
     stripped = prompt.strip()
     if not stripped:
         return True
     if stripped.lower() in SKIP_PATTERNS:
+        return True
+    if stripped.startswith("/"):
         return True
     if len(stripped.split()) < MIN_WORDS:
         return True
@@ -100,13 +81,39 @@ def should_skip(prompt: str) -> bool:
     return False
 
 
-# ── LLM Enhancement ──────────────────────────────────────────────────────────
+# -- API Key Resolution -------------------------------------------------------
 
-def get_api_key() -> str:
-    """Get API key: env var first, then macOS keychain (where Claude Code stores it)."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if key:
-        return key
+def _read_credentials_file():
+    """Read API key from ~/.claude/.credentials.json (Linux/Windows/macOS).
+
+    Claude Code stores credentials in several formats:
+    - OAuth: {"claudeAiOauth": {"accessToken": "sk-ant-oat01-..."}}
+    - Direct key: {"apiKey": "sk-ant-api03-..."} or similar
+    """
+    try:
+        creds_path = Path.home() / ".claude" / ".credentials.json"
+        if not creds_path.exists():
+            return ""
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+
+        # OAuth tokens (most common for Claude Code users)
+        oauth = data.get("claudeAiOauth")
+        if isinstance(oauth, dict):
+            token = oauth.get("accessToken", "")
+            if token:
+                return str(token)
+
+        # Direct API key fields
+        for key_name in ("apiKey", "api_key", "anthropic_api_key"):
+            if key_name in data and data[key_name]:
+                return str(data[key_name])
+    except Exception:
+        pass
+    return ""
+
+
+def _read_macos_keychain():
+    """Read API key from macOS keychain where Claude Code stores it."""
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", "Claude Code", "-w"],
@@ -119,21 +126,48 @@ def get_api_key() -> str:
     return ""
 
 
-def enhance_with_claude(prompt: str) -> str:
-    """Call Haiku API directly — fast (~1s vs 7s for claude CLI)."""
+def get_api_key():
+    """
+    Resolve API key in order:
+    1. ANTHROPIC_API_KEY env var
+    2. ~/.claude/.credentials.json (Linux/Windows)
+    3. macOS keychain
+    """
+    # 1. Environment variable
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if key:
+        return key
+
+    # 2. Credentials file
+    key = _read_credentials_file()
+    if key:
+        return key
+
+    # 3. macOS keychain
+    key = _read_macos_keychain()
+    if key:
+        return key
+
+    return ""
+
+
+# -- Haiku API Call ------------------------------------------------------------
+
+def enhance_with_claude(prompt):
+    """Call Claude Haiku API to enhance the prompt. Returns enhanced text."""
     api_key = get_api_key()
     if not api_key:
         raise RuntimeError("No API key found")
 
     payload = {
-        "model": "claude-haiku-4-5-20251001",
+        "model": HAIKU_MODEL,
         "max_tokens": 512,
         "system": ENHANCEMENT_SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": prompt}],
     }
-    data = json.dumps(payload).encode()
+    data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        ANTHROPIC_API_URL,
         data=data,
         headers={
             "x-api-key": api_key,
@@ -141,139 +175,97 @@ def enhance_with_claude(prompt: str) -> str:
             "content-type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as resp:
         result = json.loads(resp.read())
         return result["content"][0]["text"].strip()
 
 
-# ── Diff Display ─────────────────────────────────────────────────────────────
+# -- Main ---------------------------------------------------------------------
 
-def show_diff(original: str, enhanced: str) -> None:
-    orig_lines = original.splitlines(keepends=True)
-    enh_lines = enhanced.splitlines(keepends=True)
+def main():
+    """
+    Hook entry point. Reads JSON from stdin, optionally enhances the prompt,
+    and writes additional context to stdout as JSON.
 
-    diff = list(
-        difflib.unified_diff(orig_lines, enh_lines, fromfile="original", tofile="enhanced", lineterm="")
-    )
+    Exit 0 = allow prompt (with or without additional context).
+    On ANY error, exit 0 silently (fail open).
+    """
+    # Check disabled flag early
+    if os.environ.get("PROMPT_FORGE_DISABLED", "").lower() in ("1", "true", "yes"):
+        sys.exit(0)
 
-    tty_print(f"\n{BOLD}╔══ Prompt Forge ══════════════════════════════════════╗{RESET}")
-
-    if not diff:
-        tty_print(f"{YELLOW}  No changes — prompt is already well-formed.{RESET}")
-        tty_print(f"{BOLD}╚══════════════════════════════════════════════════════╝{RESET}")
-        return
-
-    tty_print("")
-    for line in diff:
-        if line.startswith("+++") or line.startswith("---"):
-            tty_print(f"{DIM}{line}{RESET}")
-        elif line.startswith("@@"):
-            tty_print(f"{CYAN}{line}{RESET}")
-        elif line.startswith("+"):
-            tty_print(f"{GREEN}{line}{RESET}")
-        elif line.startswith("-"):
-            tty_print(f"{RED}{line}{RESET}")
-        else:
-            tty_print(line.rstrip())
-
-    tty_print(f"\n{BOLD}╚══════════════════════════════════════════════════════╝{RESET}")
-
-
-# ── Interactive Choice ────────────────────────────────────────────────────────
-
-def open_editor(text: str) -> str:
-    """Open $EDITOR with the text and return the edited result."""
-    editor = os.environ.get("EDITOR", "nano")
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(text)
-        tmp = f.name
-    subprocess.run([editor, tmp])
-    with open(tmp) as f:
-        edited = f.read().strip()
-    os.unlink(tmp)
-    return edited if edited else text
-
-
-def get_user_choice(original: str, enhanced: str) -> str:
-    """Show menu and return the final prompt to use."""
-    tty_print(f"\n{BOLD}What would you like to do?{RESET}")
-    tty_print(f"  {GREEN}[a]{RESET} Accept enhanced prompt")
-    tty_print(f"  {YELLOW}[e]{RESET} Edit enhanced prompt")
-    tty_print(f"  {RED}[r]{RESET} Reject — use original\n")
-
-    # Use gum if available for nicer UX
-    if has_command("gum"):
-        result = subprocess.run(
-            ["gum", "choose", "--cursor-prefix", "→ ", "Accept", "Edit", "Reject"],
-            capture_output=True,
-            text=True,
-        )
-        choice = result.stdout.strip().lower()
-    else:
-        choice = tty_input("Choice (a/e/r) [a]: ").lower() or "a"
-
-    if choice in ("a", "accept"):
-        tty_print(f"{GREEN}✓ Using enhanced prompt{RESET}\n")
-        return enhanced
-    elif choice in ("e", "edit"):
-        tty_print(f"{YELLOW}Opening editor...{RESET}\n")
-        if has_command("gum"):
-            result = subprocess.run(
-                ["gum", "write", "--placeholder", "Edit your prompt...", "--value", enhanced],
-                capture_output=True,
-                text=True,
-            )
-            edited = result.stdout.strip() if result.stdout.strip() else enhanced
-        else:
-            edited = open_editor(enhanced)
-        tty_print(f"{GREEN}✓ Using edited prompt{RESET}\n")
-        return edited
-    else:
-        tty_print(f"{YELLOW}✓ Using original prompt{RESET}\n")
-        return original
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    # Debug log — remove after confirming hook fires
-    import datetime
-    with open("/tmp/prompt-forge-debug.log", "a") as f:
-        f.write(f"[{datetime.datetime.now()}] hook fired\n")
+    # Check mode
+    mode = os.environ.get("PROMPT_FORGE_MODE", "auto").lower()
+    if mode == "off":
+        sys.exit(0)
 
     # Read hook input from stdin
     raw = sys.stdin.read()
     try:
         data = json.loads(raw)
         prompt = data.get("prompt", "")
-    except json.JSONDecodeError:
-        prompt = raw.strip()
+    except (json.JSONDecodeError, ValueError):
+        # Can't parse input, fail open
+        sys.exit(0)
 
     if not prompt or should_skip(prompt):
         sys.exit(0)
 
-    # Check if user has disabled prompt forge
-    if os.environ.get("PROMPT_FORGE_DISABLED", "").lower() in ("1", "true", "yes"):
-        sys.exit(0)
-
     try:
         enhanced = enhance_with_claude(prompt)
-    except Exception as e:
-        tty_print(f"{YELLOW}prompt-forge: enhancement failed ({e}), using original{RESET}")
+    except Exception as exc:
+        print("[Prompt Forge] Enhancement skipped: %s" % str(exc), file=sys.stderr)
         sys.exit(0)
 
-    # No meaningful change — pass through silently
-    if enhanced.strip() == prompt.strip() or not enhanced.strip():
+    # No meaningful change -- pass through silently
+    if not enhanced or enhanced.strip() == prompt.strip():
         sys.exit(0)
 
-    show_diff(prompt, enhanced)
-    final = get_user_choice(prompt, enhanced)
+    # Build the additional context output.
+    # Instruct Claude to present the enhancement to the user and ask
+    # for confirmation before proceeding. Claude acts as the UI layer.
+    context_text = (
+        "[Prompt Forge] An enhanced version of the user's prompt is available.\n"
+        "\n"
+        "IMPORTANT: Before doing ANY work, you MUST present the following to "
+        "the user and ask which version they want to use. Do NOT proceed until "
+        "the user confirms.\n"
+        "\n"
+        "Show this to the user:\n"
+        "\n"
+        "---\n"
+        "**Prompt Forge** enhanced your request:\n"
+        "\n"
+        "**Original:**\n"
+        "> %s\n"
+        "\n"
+        "**Enhanced:**\n"
+        "> %s\n"
+        "\n"
+        "How would you like to proceed?\n"
+        "1. **Use enhanced** -- proceed with the enhanced prompt\n"
+        "2. **Use original** -- proceed with your original prompt as-is\n"
+        "3. **Edit** -- tell me what to change about the enhanced version\n"
+        "---\n"
+        "\n"
+        "Wait for the user's choice before taking any action."
+    ) % (prompt, enhanced)
 
-    # Only output if user chose something different from the original.
-    # No output = Claude Code uses the original prompt unchanged.
-    if final.strip() != prompt.strip():
-        print(json.dumps({"prompt": final}))
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": context_text,
+        }
+    }
+    print(json.dumps(output))
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # Fail open on any uncaught exception
+        sys.exit(0)
