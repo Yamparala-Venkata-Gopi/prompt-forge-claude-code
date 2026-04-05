@@ -1,20 +1,19 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "prompt-forge-claude-code",
-  "description": "Automatic prompt enhancement for Claude Code — intercepts your prompts, refines them with AI, shows a diff, and lets you accept, edit, or reject before Claude ever sees it.",
   "owner": {
     "name": "Yamparala Venkata Gopi",
     "email": ""
   },
   "metadata": {
-    "description": "Automatic prompt enhancement for Claude Code sessions"
+    "description": "Automatic prompt enhancement for Claude Code -- silently enriches context via Haiku, with a manual /forge skill for interactive use.",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "prompt-forge-claude-code",
       "source": "./",
-      "description": "Intercepts every Claude Code prompt, enhances it via Claude Haiku, shows a colored diff, and lets you accept, edit, or reject — keeping you in control.",
-      "version": "1.0.1",
+      "description": "Silently enhances Claude Code prompts via Haiku API and adds enriched context. Includes a /forge skill for manual enhancement.",
+      "version": "2.0.0",
       "author": {
         "name": "Yamparala Venkata Gopi",
         "email": ""
@@ -34,7 +33,7 @@
         "prompt",
         "enhancement",
         "hooks",
-        "diff",
+        "context",
         "productivity"
       ],
       "strict": false

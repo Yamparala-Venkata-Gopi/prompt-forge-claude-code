@@ -1,45 +1,61 @@
-# ⚒ prompt-forge-claude-code
+# prompt-forge-claude-code
 
-> Automatic prompt enhancement for Claude Code — intercepts your prompts, refines them with AI, shows you the diff, and lets you accept, edit, or reject before Claude ever sees it.
+Automatic prompt enhancement for Claude Code. Enhances your prompts via Claude Haiku and presents both versions for you to choose from — full visibility, full control. Also includes a manual `/forge` skill for on-demand enhancement.
 
 ---
 
-## What It Does
+## How It Works
 
-You type a prompt. Before Claude Code processes it, **prompt-forge** steps in:
+prompt-forge operates in two modes:
 
-1. Sends your prompt to Claude Haiku for refinement
-2. Shows a colored diff of what changed
-3. Asks you to **Accept**, **Edit**, or **Reject**
-4. Submits your chosen version to Claude
+### Auto Mode (Default)
+
+A `UserPromptSubmit` hook intercepts your prompt, enhances it via Claude Haiku (~2s), and presents both versions for you to choose from. You stay in control.
 
 ```
-You typed:
-  "fix the bug"
-
-prompt-forge suggests:
-  "Fix the null pointer dereference in `handle_request()` in src/proxy.rs —
-   it panics when the request body is empty. Add a nil guard at the top of
-   the function and add a regression test."
-
-╔══ Prompt Forge ══════════════════════════════════════╗
-- fix the bug
-+ Fix the null pointer dereference in `handle_request()` in src/proxy.rs —
-+ it panics when the request body is empty. Add a nil guard at the top of
-+ the function and add a regression test.
-╚══════════════════════════════════════════════════════╝
-
-What would you like to do?
-  [a] Accept enhanced prompt
-  [e] Edit enhanced prompt
-  [r] Reject — use original
+You type: "fix the auth bug"
+        |
+        v
+Hook fires → Haiku enhances (~2s)
+        |
+        v
+Claude shows you:
+  ┌─────────────────────────────────────────────────┐
+  │  Prompt Forge enhanced your request:             │
+  │                                                  │
+  │  Original: "fix the auth bug"                    │
+  │                                                  │
+  │  Enhanced: "Fix the auth bug in the login        │
+  │  handler — check for null session, incorrect     │
+  │  password comparison, or missing error handling.  │
+  │  Ensure existing tests pass."                    │
+  │                                                  │
+  │  1. Use enhanced                                 │
+  │  2. Use original                                 │
+  │  3. Edit                                         │
+  └─────────────────────────────────────────────────┘
+        |
+        v
+You choose → Claude proceeds with your choice
 ```
+
+Your prompt is never silently modified. You always see the enhancement and decide what happens next.
+
+### Manual Mode (/forge)
+
+Type `/forge <your prompt>` in Claude Code for an on-demand enhancement:
+
+```
+/forge fix the auth bug
+```
+
+Claude will show you a before/after comparison and ask if you want to use the enhanced version.
 
 ---
 
 ## Installation
 
-Inside a Claude Code session, run these two commands:
+Inside a Claude Code session:
 
 ```
 /plugin marketplace add Yamparala-Venkata-Gopi/prompt-forge-claude-code
@@ -49,22 +65,18 @@ Inside a Claude Code session, run these two commands:
 /plugin install prompt-forge-claude-code@prompt-forge-claude-code
 ```
 
-> One-time install — Claude Code saves it to `~/.claude/settings.json` and loads it automatically in every future session.
-
-That's it. Claude Code's plugin system handles everything — no shell scripts, no manual config.
-
 ### Prerequisites
 
-- Claude Code installed and authenticated (that's it)
-- Optional: `gum` for a nicer TUI (`brew install charmbracelet/tap/gum`)
-
-> **No API key setup needed.** prompt-forge calls the `claude` CLI directly and reuses Claude Code's own authentication.
+- **Claude Code** installed and authenticated
+- **Python 3.8+** available as `python3`
+- **Anthropic API key** set via one of:
+  - `ANTHROPIC_API_KEY` environment variable (recommended)
+  - `~/.claude/.credentials.json` file (Linux/Windows, auto-detected)
+  - macOS keychain (auto-detected)
 
 ---
 
 ## Uninstall
-
-Inside a Claude Code session:
 
 ```
 /plugin uninstall prompt-forge-claude-code@prompt-forge-claude-code
@@ -74,59 +86,38 @@ Inside a Claude Code session:
 
 ## Configuration
 
-### Disable Temporarily
+### Environment Variables
 
-```bash
-export PROMPT_FORGE_DISABLED=1
-```
+| Variable | Values | Default | Description |
+|---|---|---|---|
+| `PROMPT_FORGE_DISABLED` | `1`, `true`, `yes` | unset | Disable all prompt enhancement |
+| `PROMPT_FORGE_MODE` | `auto`, `off` | `auto` | `auto` = silent hook enhancement; `off` = disable hook |
+| `ANTHROPIC_API_KEY` | API key string | unset | Anthropic API key for Haiku calls |
 
-### When Prompts Are Skipped (No Enhancement)
+### When Prompts Are Skipped
 
-prompt-forge silently skips enhancement for:
+The hook silently skips enhancement for:
+- Empty prompts or whitespace only
 - Short prompts under 4 words
-- Simple confirmations: `yes`, `no`, `ok`, `done`, `continue`
+- Simple confirmations: `yes`, `no`, `ok`, `done`, `continue`, `y`, `n`, etc.
+- Slash commands starting with `/`
 - Already-detailed prompts over 600 characters
 - When `PROMPT_FORGE_DISABLED=1`
+- When `PROMPT_FORGE_MODE=off`
 
 ### Cost
 
-Uses **Claude Haiku** — the fastest and cheapest Claude model.
-Typical cost per enhancement: **< $0.001**.
+Uses Claude Haiku -- the fastest and cheapest Claude model. Typical cost per enhancement: less than $0.001.
 
 ---
 
-## How It Works
+## Cross-Platform Support
 
-prompt-forge uses Claude Code's native `UserPromptSubmit` hook via the plugin system.
+prompt-forge works on macOS, Linux, and Windows (via WSL or Python).
 
-```
-User submits prompt
-        │
-        ▼
-UserPromptSubmit hook fires
-        │
-        ▼
-enhance_prompt.py runs (${CLAUDE_PLUGIN_ROOT}/hooks/enhance_prompt.py)
-  → calls Claude Haiku API
-  → shows colored diff in terminal
-  → reads user choice via /dev/tty
-        │
-        ▼
-Returns {"prompt": "<chosen version>"} to Claude Code
-```
-
----
-
-## Manual Usage (Without Auto-Hook)
-
-In Claude Code, type:
-```
-/forge
-```
-or
-```
-enhance this prompt: fix the authentication bug
-```
+- **API key resolution** checks env var, credentials file, and macOS keychain in order
+- **No platform-specific tools** required (no `gum`, no `/dev/tty`)
+- **Python stdlib only** -- zero external dependencies
 
 ---
 
@@ -134,30 +125,68 @@ enhance this prompt: fix the authentication bug
 
 ```
 prompt-forge-claude-code/
-├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest
-├── agents/
-│   └── prompt-forge.md      # Manual-invoke agent
-├── skills/
-│   └── prompt-enhance/
-│       └── SKILL.md         # Skill definition
-├── hooks/
-│   ├── hooks.json           # UserPromptSubmit hook (auto-discovered)
-│   └── enhance_prompt.py    # Core hook script
-└── README.md
+  .claude-plugin/
+    plugin.json              Plugin manifest
+    marketplace.json         Marketplace metadata
+  agents/
+    prompt-forge.md          Agent definition (uses Haiku)
+  skills/
+    prompt-enhance/
+      SKILL.md               /forge skill definition
+  hooks/
+    hooks.json               UserPromptSubmit hook config
+    enhance_prompt.py        Core hook script (Python)
+  tests/
+    test_enhance_prompt.py   Unit tests (60 tests)
+  CHANGELOG.md               Version history and upgrade notes
+  README.md
+  package.json
 ```
 
 ---
 
-## Contributing
+## Upgrading from v1
 
-PRs welcome.
+v2 is a complete redesign. The hook no longer uses TTY-based interactive menus
+(which were incompatible with the Claude Code hook system). Instead, Claude itself
+presents the enhancement and lets you choose.
 
-Ideas:
-- Windows support
-- Project-aware enhancement (reads `CLAUDE.md` for context)
-- Enhancement history log
-- Per-project enable/disable
+```bash
+# 1. Update the plugin
+/plugin update
+
+# 2. Reload to pick up new hook + skill files
+/reload-plugins
+```
+
+That's it. Your existing `PROMPT_FORGE_DISABLED` env var still works. See
+[CHANGELOG.md](CHANGELOG.md) for full details.
+
+---
+
+## Development
+
+### Run tests
+
+```bash
+python3 tests/test_enhance_prompt.py
+```
+
+All 60 tests use mocks — no API key or network access required.
+
+### Test locally in Claude Code
+
+```bash
+claude --plugin-dir /path/to/prompt-forge-claude-code
+```
+
+Then type any prompt with 4+ words to see the enhancement flow.
+
+### Validate plugin before publishing
+
+```bash
+claude plugin validate /path/to/prompt-forge-claude-code
+```
 
 ---
 

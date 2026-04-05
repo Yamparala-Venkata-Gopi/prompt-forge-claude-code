@@ -1,7 +1,7 @@
 {
   "name": "prompt-forge-claude-code",
-  "version": "1.0.1",
-  "description": "Automatically intercepts and enhances Claude Code prompts before submission. Shows a diff, lets you accept, edit, or reject — keeping you in control.",
+  "version": "2.0.0",
+  "description": "Enhances Claude Code prompts via Haiku and presents both versions for you to choose from before Claude proceeds.",
   "author": {
     "name": "Yamparala Venkata Gopi",
     "url": "https://github.com/Yamparala-Venkata-Gopi"
